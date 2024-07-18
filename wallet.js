@@ -1,6 +1,5 @@
 const { TonClient, WalletContractV4, internal } = require("@ton/ton");
 const TonWeb = require("tonweb");
-
 const {
   mnemonicNew,
   mnemonicToPrivateKey,
@@ -8,14 +7,14 @@ const {
   signVerify,
 } = require("@ton/crypto");
 
-const tonCenterPoint = "https://testnet.toncenter.com";
+const tonCenterPoint = "https://toncenter.com";
 const tonApiKey =
   "4228a35e740e0041639fdbc8dd46edc38c817b3a3bc3938ff2f8f13fa38afa33";
 
 const client = new TonClient({
   endpoint: `${tonCenterPoint}/api/v2/jsonRPC`,
   apiKey: tonApiKey,
-  timeout: 60000, // Set a longer timeout to handle retries
+  timeout: 60000,
 });
 
 const tonweb = new TonWeb(
@@ -24,7 +23,7 @@ const tonweb = new TonWeb(
   })
 );
 
-const func = async () => {
+const func = async (recipientAddress) => {
   try {
     // Generate new key
     let mnemonics = await mnemonicNew();
@@ -95,14 +94,14 @@ const func = async () => {
 
     // Get transaction history
     let transactions = await retryWithBackoff(() =>
-      client.getTransactions(wallet.address, { limit: 10 })
+      tonweb.getTransactions(walletAddress, 1)
     );
     console.log("Transaction History:", transactions);
 
     // Prepare the transfer message
     let transferMessage = internal({
       value: "1.5", // Amount in TON
-      to: "EQB_AmFKfZ3yIKdc7q7rKWV2gUKxTvfzQRwBoqLw98D9BiMp", // Recipient address
+      to: recipientAddress, // Re/ Recipient address
       body: "Hello world", // Message body
     });
 
@@ -120,40 +119,32 @@ const func = async () => {
     });
     console.log("Created transfer:", transfer);
 
-    // Offline signing (Sign the transfer message)
-    const boc = Buffer.from(transfer.toBoc().toString("hex"), "hex");
-    const signedMessage = sign(boc, keyPair.secretKey);
-    console.log("Signed Message:", signedMessage);
-
-    // Determine if the network is testnet or mainnet
-    const isTestnet = tonCenterPoint.includes("testnet");
-
     // Send transfer
-    try {
-      const tx = await client.sendExternalMessage(wallet, transfer);
-      // Fetch the latest transaction again to get its hash using TonWeb
-      tonweb
-        .getTransactions(walletAddress, 1)
-        .then((resp) => {
-          console.log("Transaction response:", resp);
-          if (resp && resp.length > 0 && resp[0].transaction_id) {
-            const transactionDetails = resp[0];
-            const hash = transactionDetails.transaction_id.hash;
-            console.log("Transaction Hash from TonWeb:", hash);
+    const tx = await client.sendExternalMessage(wallet, transfer);
 
-            // Provide the explorer link based on the hash from TonWeb
-            const explorerLink = isTestnet
-              ? `https://testnet.tonscan.org/tx/${hash}`
-              : `https://tonscan.org/tx/${hash}`;
-            console.log("Explorer Link from TonWeb:", explorerLink);
-          }
-        })
-        .catch((error) => {
-          console.log("Error fetching transaction from TonWeb:", error);
-        });
-    } catch (error) {
-      console.log("Error in transfer:", error);
-    }
+    // Fetch the latest transaction again to get its hash using TonWeb
+    await tonweb
+      .getTransactions(walletAddress, 1)
+      .then(async (resp) => {
+        console.log("Transaction response:", resp);
+        if (resp && resp.length > 0 && resp[0].transaction_id) {
+          const transactionDetails = resp[0];
+          const hash = transactionDetails.transaction_id.hash;
+          console.log("Transaction Hash from TonWeb:", hash);
+
+          // Provide the explorer link based on the hash from TonWeb
+          const explorerLink = tonCenterPoint.includes("testnet")
+            ? `https://testnet.tonscan.org/tx/${hash}`
+            : `https://tonscan.org/tx/${hash}`;
+          console.log("Explorer Link from TonWeb:", explorerLink);
+
+          // Call getTransactionDetails with the correct hash
+          await getTransactionDetails(walletAddress, hash);
+        }
+      })
+      .catch((error) => {
+        console.log("Error fetching transaction from TonWeb:", error);
+      });
 
     // Check if the contract is deployed
     const contractState = await client.isContractDeployed(wallet.address);
@@ -184,15 +175,22 @@ const func = async () => {
     );
     console.log("Is the hash signature valid?", isHashValid);
 
-    // Fetch the latest transaction again to get its hash
-    transactions = await retryWithBackoff(() =>
-      client.getTransactions(wallet.address, { limit: 1 })
+    // Call additional functions
+    const jettonTransferTx = await transferJetton(
+      recipientAddress,
+      "10.0",
+      keyPair,
+      wallet,
+      walletAddress
     );
-    if (transactions && transactions.length > 0) {
-      const latestTx = transactions[0];
-      const hash = Buffer.from(latestTx.hash(), "base64").toString("hex");
-      console.log("Latest Transaction Hash:", hash);
-    }
+
+    const tonTransferTx = await transferTON(
+      recipientAddress,
+      "1.0",
+      keyPair,
+      wallet,
+      walletAddress
+    );
   } catch (error) {
     console.log("An error occurred:", error);
   }
@@ -209,4 +207,166 @@ const retryWithBackoff = async (fn, retries = 5, delay = 1000) => {
   }
 };
 
-func();
+const getTransactionDetails = async (accountAddress, hash) => {
+  try {
+    const transaction = await tonweb.getTransactions(accountAddress, 1);
+    console.log("Transaction Details:", transaction);
+
+    const tx = transaction[0];
+    const payload = tx.data;
+    const amount = tx.in_msg.value;
+    const to = tx.in_msg.destination;
+    const from = tx.in_msg.source;
+    const value = tx.in_msg.value;
+    const fees = tx.in_msg.fwd_fee;
+    const createdAt = tx.in_msg.created_at;
+    const lt = tx.in_msg.created_lt;
+    const comment = tx.in_msg.message;
+    const decodedComment = Buffer.from(comment, "base64").toString("utf-8");
+
+    console.log("Payload:", payload);
+    console.log("Amount:", amount);
+    console.log("To:", to);
+    console.log("From:", from);
+    console.log("Value:", value);
+    console.log("Fees:", fees);
+
+    return {
+      payload,
+      amount,
+      to,
+      from,
+      value,
+      fees,
+      createdAt,
+      lt,
+      decodedComment,
+    };
+  } catch (error) {
+    console.error("Error fetching transaction details:", error);
+  }
+};
+
+const transferJetton = async (
+  toAddress,
+  amount,
+  keyPair,
+  wallet,
+  walletAddress
+) => {
+  try {
+    const jettonWallet = new TonWeb.token.jetton.JettonWallet(tonweb.provider, {
+      address: walletAddress,
+    });
+
+    const comment = new Uint8Array([
+      ...new Uint8Array(4),
+      ...new TextEncoder().encode("text comment"),
+    ]);
+
+    const payload = await jettonWallet.createTransferBody({
+      jettonAmount: TonWeb.utils.toNano(amount), // Jetton amount (in basic indivisible units)
+      toAddress: new TonWeb.utils.Address(toAddress), // recipient user's wallet address (not Jetton wallet)
+      forwardAmount: TonWeb.utils.toNano("0.01"), // some amount of TONs to invoke Transfer notification message
+      forwardPayload: comment, // text comment for Transfer notification message
+      responseAddress: walletAddress, // return the TONs after deducting commissions back to the sender's wallet address
+    });
+
+    const seqno = await client.open(wallet).getSeqno();
+
+    const transfer = await wallet.createTransfer({
+      seqno,
+      secretKey: keyPair.secretKey,
+      messages: [
+        internal({
+          value: TonWeb.utils.toNano("0.05"),
+          to: walletAddress,
+          payload: payload,
+          sendMode: 3,
+        }),
+      ],
+    });
+
+    // Send transfer
+    const tx = await client.sendExternalMessage(wallet, transfer);
+
+    // Fetch the latest transaction again to get its hash using TonWeb
+    await tonweb.getTransactions(walletAddress, 1).then(async (resp) => {
+      console.log("Transaction response:", resp);
+      if (resp && resp.length > 0 && resp[0].transaction_id) {
+        const transactionDetails = resp[0];
+        const hash = transactionDetails.transaction_id.hash;
+        console.log("Jetton Transfer Transaction:", hash);
+
+        // Provide the explorer link based on the hash from TonWeb
+        const explorerLink = tonCenterPoint.includes("testnet")
+          ? `https://testnet.tonscan.org/tx/${hash}`
+          : `https://tonscan.org/tx/${hash}`;
+        console.log("Explorer Link from TonWeb:", explorerLink);
+
+        // Call getTransactionDetails with the correct hash
+        await getTransactionDetails(walletAddress, hash);
+      }
+    });
+
+    return tx;
+  } catch (error) {
+    console.error("Error in Jetton transfer:", error);
+  }
+};
+
+const transferTON = async (
+  toAddress,
+  amount,
+  keyPair,
+  wallet,
+  walletAddress
+) => {
+  try {
+    const tonTransferMessage = internal({
+      value: TonWeb.utils.toNano(amount), // Amount in TON
+      to: toAddress,
+      body: "TON Transfer",
+    });
+
+    // Get Wallet Seqno
+    let contract = client.open(wallet);
+    let seqno = await contract.getSeqno();
+
+    // Create transfer
+    let transfer = await wallet.createTransfer({
+      seqno,
+      secretKey: keyPair.secretKey,
+      messages: [tonTransferMessage],
+    });
+
+    // Send transfer
+    const tx = await client.sendExternalMessage(wallet, transfer);
+
+    // Fetch the latest transaction again to get its hash using TonWeb
+    await tonweb.getTransactions(walletAddress, 1).then(async (resp) => {
+      console.log("Transaction response:", resp);
+      if (resp && resp.length > 0 && resp[0].transaction_id) {
+        const transactionDetails = resp[0];
+        const hash = transactionDetails.transaction_id.hash;
+        console.log("TON Transfer Transaction:", hash);
+
+        // Provide the explorer link based on the hash from TonWeb
+        const explorerLink = tonCenterPoint.includes("testnet")
+          ? `https://testnet.tonscan.org/tx/${hash}`
+          : `https://tonscan.org/tx/${hash}`;
+        console.log("Explorer Link from TonWeb:", explorerLink);
+
+        // Call getTransactionDetails with the correct hash
+        await getTransactionDetails(walletAddress, hash);
+      }
+    });
+
+    return tx;
+  } catch (error) {
+    console.error("Error in TON transfer:", error);
+  }
+};
+
+// Provide the account address dynamically
+func("UQDOvT4VeNNUq3ibvviqkIcqyu_75SH_MBSN4VJYqDulhEly");
