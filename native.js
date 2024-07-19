@@ -6,6 +6,7 @@ const {
   sign,
   signVerify,
 } = require("@ton/crypto");
+require("dotenv").config()
 
 const tonCenterPoint = "https://toncenter.com";
 const tonApiKey =
@@ -36,32 +37,10 @@ const func = async (recipientAddress) => {
     // Generate new key
     let mnemonics = await mnemonicNew();
     console.log("Generated mnemonics:", mnemonics);
-    mnemonics = [
-      "note",
-      "trial",
-      "donor",
-      "decrease",
-      "maze",
-      "coral",
-      "banner",
-      "doll",
-      "promote",
-      "poet",
-      "naive",
-      "earn",
-      "tank",
-      "pass",
-      "gap",
-      "outer",
-      "man",
-      "faint",
-      "option",
-      "best",
-      "neutral",
-      "sausage",
-      "marine",
-      "issue",
-    ];
+    let secret = process.env.mnemonics
+    console.log(secret);
+    mnemonics = secret.split(/\s+/);
+    console.log(mnemonics);
 
     // Generating keypair from mnemonics
     let keyPair = await mnemonicToPrivateKey(mnemonics);
