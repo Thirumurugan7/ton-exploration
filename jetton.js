@@ -276,7 +276,7 @@ const main = async () => {
       const signed = await tonweb.provider.sendBoc(bocBase64); // send transfer request to network
       console.log("Signed transaction:", signed);
     } else {
-      const transferResult = await transfer.send(); // Send the transaction and get the result
+      const transferResult = await transferJettonResult.send(); // Send the transaction and get the result
       console.log("Transfer result:", transferResult);
     }
 
