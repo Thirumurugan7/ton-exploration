@@ -42,30 +42,7 @@ const func = async (recipientAddress) => {
     }
 
     let mnemonics = [
-      "note",
-      "trial",
-      "donor",
-      "decrease",
-      "maze",
-      "coral",
-      "banner",
-      "doll",
-      "promote",
-      "poet",
-      "naive",
-      "earn",
-      "tank",
-      "pass",
-      "gap",
-      "outer",
-      "man",
-      "faint",
-      "option",
-      "best",
-      "neutral",
-      "sausage",
-      "marine",
-      "issue",
+      
     ];
 
     // Generate keypair from mnemonics
