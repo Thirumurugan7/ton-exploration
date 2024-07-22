@@ -1,4 +1,10 @@
-const { TonClient, WalletContractV4, internal } = require("@ton/ton");
+const {
+  TonClient,
+  WalletContractV4,
+  internal,
+  beginCell,
+  Cell,
+} = require("@ton/ton");
 const TonWeb = require("tonweb");
 const {
   mnemonicNew,
@@ -6,7 +12,6 @@ const {
   sign,
   signVerify,
 } = require("@ton/crypto");
-require("dotenv").config()
 
 const tonCenterPoint = "https://toncenter.com";
 const tonApiKey =
@@ -24,6 +29,8 @@ const tonweb = new TonWeb(
   })
 );
 
+const formatBalance = (balance) => (Number(balance) / 1e9).toFixed(2);
+
 const func = async (recipientAddress) => {
   try {
     // Validate recipient address
@@ -34,15 +41,34 @@ const func = async (recipientAddress) => {
       return;
     }
 
-    // Generate new key
-    let mnemonics = await mnemonicNew();
-    console.log("Generated mnemonics:", mnemonics);
-    let secret = process.env.mnemonics
-    console.log(secret);
-    mnemonics = secret.split(/\s+/);
-    console.log(mnemonics);
+    let mnemonics = [
+      "note",
+      "trial",
+      "donor",
+      "decrease",
+      "maze",
+      "coral",
+      "banner",
+      "doll",
+      "promote",
+      "poet",
+      "naive",
+      "earn",
+      "tank",
+      "pass",
+      "gap",
+      "outer",
+      "man",
+      "faint",
+      "option",
+      "best",
+      "neutral",
+      "sausage",
+      "marine",
+      "issue",
+    ];
 
-    // Generating keypair from mnemonics
+    // Generate keypair from mnemonics
     let keyPair = await mnemonicToPrivateKey(mnemonics);
     console.log("Generated key pair:", keyPair);
 
@@ -54,180 +80,245 @@ const func = async (recipientAddress) => {
     });
     console.log("Created wallet:", wallet);
 
-    // Get wallet address
-    const walletAddress = wallet.address.toString(true, true, true);
-    console.log("Wallet Address:", walletAddress);
+    // Get sender wallet address
+    const senderAddress = wallet.address.toString(true, true, true);
+    console.log("Sender Wallet Address:", senderAddress);
 
-    // Get balance
-    let balance = await retryWithBackoff(() =>
+    // Get sender balance before transfer
+    let senderBalanceBefore = await retryWithBackoff(() =>
       client.getBalance(wallet.address)
     );
-    console.log("Wallet balance:", balance);
+    console.log(
+      "Sender TON Balance Before:",
+      formatBalance(senderBalanceBefore),
+      "TON"
+    );
 
-    // Get Wallet Seqno
+    // Get sender seqno
     let contract = client.open(wallet);
-    let seqno = await contract.getSeqno();
-    console.log("Wallet Seqno:", seqno);
+    let senderSeqno = await contract.getSeqno();
+    console.log("Sender Seq No:", senderSeqno);
 
-    // Get basic address information
-    let addressInfo = await retryWithBackoff(() =>
+    // Get sender account information
+    let senderAccountInfo = await retryWithBackoff(() =>
       client.getContractState(wallet.address)
     );
-    console.log("Address Information:", addressInfo);
+    console.log("Sender Account Info:", senderAccountInfo);
 
-    // Get transaction history
-    let transactions = await retryWithBackoff(() =>
-      client.getTransactions(walletAddress, 1)
+    // Get receiver balance before transfer
+    let receiverBalanceBefore = await retryWithBackoff(() =>
+      client.getBalance(recipientAddress)
     );
-    console.log("Transaction History:", transactions);
+    console.log(
+      "Receiver TON Balance Before:",
+      formatBalance(receiverBalanceBefore),
+      "TON"
+    );
+
+    // Get receiver account information
+    let receiverAccountInfo = await retryWithBackoff(() =>
+      client.getContractState(recipientAddress)
+    );
+    console.log("Receiver Account Info:", receiverAccountInfo);
 
     // Prepare the transfer message
     let transferMessage = internal({
-      value: TonWeb.utils.toNano("0.01"), // Amount in TON
+      value: TonWeb.utils.toNano("0.1"), // Amount in TON
       to: recipientAddress.toString(true, true, true),
-      body: "Hello world", // Message body
+      body: "TON Transfer", // Message body
     });
+    console.log("Transfer Message:", transferMessage);
 
     // Estimate fees
-    let feeEstimation = await retryWithBackoff(() =>
+    let estimatedFee = await retryWithBackoff(() =>
       client.estimateExternalMessageFee(wallet.address, transferMessage)
     );
-    console.log("Estimated Fees:", feeEstimation);
+    console.log("Estimated Fee:", estimatedFee);
 
-    // Create transfer
-    let transfer = await wallet.createTransfer({
-      seqno,
-      secretKey: keyPair.secretKey,
-      messages: [transferMessage],
-    });
-    console.log("Created transfer:", transfer);
+    // Transfer message with fee details before signing
+    let transferMsgWithFeeDetailsBefore = {
+      ...transferMessage,
+      estimatedFee,
+    };
+    console.log(
+      "Transfer Message with Fee Details Before Signing:",
+      transferMsgWithFeeDetailsBefore
+    );
 
-    // Send transfer
-    const tx = await client.sendExternalMessage(wallet, transfer);
+    // Manually serialize the transfer message
+    const serializedTransferMsgBefore = beginCell()
+      .storeUint(0x18, 6) // Message header
+      .storeAddress(transferMessage.info.dest)
+      .storeCoins(transferMessage.info.value.coins)
+      .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+      .storeRef(
+        beginCell()
+          .storeBuffer(Buffer.from(transferMessage.body.toBoc(), "base64"))
+          .endCell()
+      )
+      .endCell()
+      .toBoc();
+    console.log(
+      "Serialized Transfer Message with Fee Details Before Signing:",
+      serializedTransferMsgBefore
+    );
 
-    // Fetch the latest transaction again to get its hash using TonWeb
-    await client.getTransactions(walletAddress, 1).then(async (resp) => {
-      const inMessage = resp[0].inMessage;
-      if (inMessage && inMessage.body) {
-        const bodyHex = inMessage.body;
-        console.log("Type of bodyHex:", typeof bodyHex);
-        console.log("Body content:", bodyHex);
+    // Deserialize the transfer message to verify
+    const deserializedTransferMsgBefore = Cell.fromBoc(
+      serializedTransferMsgBefore
+    )[0];
+    console.log(
+      "Deserialized Transfer Message with Fee Details Before Signing:",
+      deserializedTransferMsgBefore
+    );
 
-        if (typeof bodyHex === "object" && bodyHex.toString) {
-          // Convert object to string
-          const hexString = bodyHex.toString();
-          console.log("Converted hexString:", hexString);
-
-          // Remove the 'x{' prefix and '}' suffix if they exist
-          const trimmedHexString = hexString.startsWith("x{")
-            ? hexString.slice(2, -1)
-            : hexString;
-          const bodyBuffer = Buffer.from(trimmedHexString, "hex");
-          const decodedBody = bodyBuffer.toString("utf-8");
-          console.log("Decoded Body:", decodedBody);
-        } else {
-          console.log("Body is not a string and cannot be converted.");
-        }
-      } else {
-        console.log("No inMessage body available.");
-      }
-      const outMessages = resp[0].outMessages;
-
-      // Ensure outMessages map is not empty
-      if (outMessages._map.size > 0) {
-        // Iterate through the _map entries
-        for (const [key, value] of outMessages._map) {
-          console.log(`Key: ${key}, Value:`, value);
-
-          if (value.body) {
-            const bodyHex = value.body;
-            console.log("Body content:", bodyHex);
-
-            // Convert the hex string to a buffer and decode it
-            const hexString = bodyHex.toString().slice(2, -1); // Remove 'x{' and '}'
-            const bodyBuffer = Buffer.from(hexString, "hex");
-            const decodedBody = bodyBuffer.toString("utf-8");
-            console.log("Decoded Body:", decodedBody);
-          } else {
-            console.log("No body in the value.");
-          }
-        }
-      } else {
-        console.log("No outMessages available.");
-      }
-
-      if (resp && resp.length > 0 && resp[0].transaction_id) {
-        const transactionDetails = resp[0];
-        const hash = transactionDetails.transaction_id.hash;
-        console.log("Transaction Hash from TonWeb:", hash);
-
-        // Provide the explorer link based on the hash from TonWeb
-        const explorerLink = tonCenterPoint.includes("testnet")
-          ? `https://testnet.tonscan.org/tx/${hash}`
-          : `https://tonscan.org/tx/${hash}`;
-        console.log("Explorer Link from TonWeb:", explorerLink);
-      }
-    });
-
-    // Check if the contract is deployed
-    const contractState = await client.isContractDeployed(wallet.address);
-    console.log("Contract Deployed:", contractState);
-
-    // Signing and verifying a custom message
-    const message = "Hello, This is Vm.";
-    const messageBuffer = Buffer.from(message);
-
-    // Sign the message
+    // Sign the message buffer
+    const messageBuffer = Buffer.from(serializedTransferMsgBefore);
     const signature = sign(messageBuffer, keyPair.secretKey);
     console.log("Signature:", signature);
 
-    // Verify the signature
-    const isValid = signVerify(messageBuffer, signature, keyPair.publicKey);
-    console.log("Is the signature valid?", isValid);
-
-    // To sign a random hash value
-    const randomHash = Buffer.from("hello-vm");
-    const hashSignature = sign(randomHash, keyPair.secretKey);
-    console.log("Hash Signature:", hashSignature);
-
-    // Verify the hash signature
-    const isHashValid = signVerify(
-      randomHash,
-      hashSignature,
-      keyPair.publicKey
-    );
-    console.log("Is the hash signature valid?", isHashValid);
-    const tonTransferTx = await transferTON(
-      recipientAddress.toString(true, true, true),
-      "0.01",
-      keyPair,
-      wallet,
-      walletAddress
+    // Transfer message with fee details after signing
+    let transferMsgWithFeeDetailsAfter = {
+      ...transferMsgWithFeeDetailsBefore,
+      signature,
+    };
+    console.log(
+      "Transfer Message with Fee Details After Signing:",
+      transferMsgWithFeeDetailsAfter
     );
 
-    // Fetch the latest transaction hash again to get its hash using TonWeb
-    await retryWithBackoff(() =>
-      client.getTransactions(walletAddress, 1).then(async (resp) => {
-        if (resp && resp.length > 0 && resp[0].transaction_id) {
-          const transactionDetails = resp[0];
-          const hash = transactionDetails.transaction_id.hash;
-          console.log("Jetton Transfer Transaction:", hash);
+    // Manually serialize the transfer message after signing
+    const signedTransferMessage = beginCell()
+      .storeUint(0x18, 6) // Message header
+      .storeAddress(transferMessage.info.dest)
+      .storeCoins(transferMessage.info.value.coins)
+      .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+      .storeRef(
+        beginCell()
+          .storeBuffer(Buffer.from(transferMessage.body.toBoc(), "base64"))
+          .endCell()
+      )
+      .endCell();
 
-          // Provide the explorer link based on the hash from TonWeb
-          const explorerLink = tonCenterPoint.includes("testnet")
-            ? `https://testnet.tonscan.org/tx/${hash}`
-            : `https://tonscan.org/tx/${hash}`;
-          console.log("Explorer Link from TonWeb:", explorerLink);
-          return { explorerLink };
+    const serializedTransferMsgAfter = signedTransferMessage.toBoc();
+    console.log(
+      "Serialized Transfer Message with Fee Details After Signing:",
+      serializedTransferMsgAfter
+    );
+
+    // Deserialize the transfer message to verify
+    const deserializedTransferMsgAfter = Cell.fromBoc(
+      serializedTransferMsgAfter
+    )[0];
+    console.log(
+      "Deserialized Transfer Message with Fee Details After Signing:",
+      deserializedTransferMsgAfter
+    );
+
+    // Create the transfer message with the signed message buffer
+    const signedTransfer = await wallet.createTransfer({
+      seqno: senderSeqno,
+      secretKey: keyPair.secretKey,
+      messages: [transferMessage],
+    });
+    console.log("Signed Transfer:", signedTransfer);
+
+    // Send the signed transfer message and print txn result + hash
+    const txnResult = await client.sendExternalMessage(wallet, signedTransfer);
+
+    // Give time for the transaction to be processed
+    await new Promise((resolve) => setTimeout(resolve, 15000));
+
+    // Get sender balance after transfer
+    let senderBalanceAfter = await retryWithBackoff(() =>
+      client.getBalance(wallet.address)
+    );
+    console.log(
+      "Sender TON Balance After:",
+      formatBalance(senderBalanceAfter),
+      "TON"
+    );
+
+    // Get receiver balance after transfer
+    let receiverBalanceAfter = await retryWithBackoff(() =>
+      client.getBalance(recipientAddress)
+    );
+    console.log(
+      "Receiver TON Balance After:",
+      formatBalance(receiverBalanceAfter),
+      "TON"
+    );
+
+    // Get last txn on sender side
+    let senderLastTxn = await client.getTransactions(senderAddress, 1);
+    console.log("Sender Last Transaction:", senderLastTxn[0]);
+    const outMessages = senderLastTxn[0].outMessages;
+
+    // Ensure outMessages map is not empty
+    if (outMessages._map.size > 0) {
+      // Iterate through the _map entries
+      for (const [key, value] of outMessages._map) {
+        console.log(`Key: ${key}, Value:`, value);
+        console.log("Sender Value Body src:", value.info.src);
+        console.log("Sender Value Body dst:", value.info.dest);
+        console.log(
+          "Sender Value Body amount:",
+          formatBalance(value.info.value.coins)
+        );
+
+        if (value.body) {
+          const bodyHex = value.body;
+          // Convert the hex string to a buffer and decode it
+          const hexString = bodyHex.toString().slice(2, -1); // Remove 'x{' and '}'
+          const bodyBuffer = Buffer.from(hexString, "hex");
+          const decodedBody = bodyBuffer.toString("utf-8");
+          console.log("Decoded Body:", decodedBody);
+        } else {
+          console.log("No body in the value.");
         }
-      })
+      }
+    } else {
+      console.log("No outMessages available.");
+    }
+
+    // Get last txn on receiver side
+    let receiverLastTxn = await client.getTransactions(
+      recipientAddress.toString(true, true, true),
+      1
     );
+    console.log("Receiver Last Transaction:", receiverLastTxn[0]);
+    const inMessage = receiverLastTxn[0].inMessage;
+    if (inMessage && inMessage.body) {
+      const bodyHex = inMessage.body;
+      const value = inMessage.info;
+      console.log("Receiver Value Body src:", value.src);
+      console.log("Receiver Value Body dst:", value.dest);
+      console.log(
+        "Receiver Value Body amount:",
+        formatBalance(value.value.coins)
+      );
+      if (typeof bodyHex === "object" && bodyHex.toString) {
+        // Convert object to string
+        const hexString = bodyHex.toString();
+        // Remove the 'x{' prefix and '}' suffix if they exist
+        const trimmedHexString = hexString.startsWith("x{")
+          ? hexString.slice(2, -1)
+          : hexString;
+        const bodyBuffer = Buffer.from(trimmedHexString, "hex");
+        const decodedBody = bodyBuffer.toString("utf-8");
+        console.log("Decoded Body:", decodedBody);
+      } else {
+        console.log("Body is not a string and cannot be converted.");
+      }
+    } else {
+      console.log("No inMessage body available.");
+    }
   } catch (error) {
     console.log("An error occurred:", error);
   }
 };
 
-const retryWithBackoff = async (fn, retries = 5, delay = 1000) => {
+const retryWithBackoff = async (fn, retries = 5, delay = 10000) => {
   try {
     return await fn();
   } catch (error) {
@@ -235,55 +326,6 @@ const retryWithBackoff = async (fn, retries = 5, delay = 1000) => {
     console.log(`Retrying in ${delay} ms due to error:`, error.message);
     await new Promise((r) => setTimeout(r, delay));
     return retryWithBackoff(fn, retries - 1, delay * 2);
-  }
-};
-
-const transferTON = async (
-  toAddress,
-  amount,
-  keyPair,
-  wallet,
-  walletAddress
-) => {
-  try {
-    const tonTransferMessage = internal({
-      value: TonWeb.utils.toNano(amount), // Amount in TON
-      to: toAddress, // Recipient address
-      body: "TON Transfer",
-    });
-
-    // Get Wallet Seqno
-    let contract = client.open(wallet);
-    let seqno = await contract.getSeqno();
-
-    // Create transfer
-    let transfer = await wallet.createTransfer({
-      seqno,
-      secretKey: keyPair.secretKey,
-      messages: [tonTransferMessage],
-    });
-
-    // Send transfer
-    const tx = await client.sendExternalMessage(wallet, transfer);
-
-    // Fetch the latest transaction again to get its hash using TonWeb
-    await client.getTransactions(walletAddress, 1).then(async (resp) => {
-      if (resp && resp.length > 0 && resp[0].transaction_id) {
-        const transactionDetails = resp[0];
-        const hash = transactionDetails.transaction_id.hash;
-        console.log("TON Transfer Transaction:", hash);
-
-        // Provide the explorer link based on the hash from TonWeb
-        const explorerLink = tonCenterPoint.includes("testnet")
-          ? `https://testnet.tonscan.org/tx/${hash}`
-          : `https://tonscan.org/tx/${hash}`;
-        console.log("Explorer Link from TonWeb:", explorerLink);
-      }
-    });
-
-    return tx;
-  } catch (error) {
-    console.error("Error in TON transfer:", error);
   }
 };
 
