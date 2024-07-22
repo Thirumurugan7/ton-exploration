@@ -269,7 +269,7 @@ const main = async () => {
     });
 
     if (isOfflineSign) {
-      const query = await transfer.getQuery(); // transfer query
+      const query = await transferJettonResult.getQuery(); // transfer query
       const boc = await query.toBoc(false); // serialized transfer query in binary BoC format
       const bocBase64 = TonWeb.utils.bytesToBase64(boc); // in base64 format
 
