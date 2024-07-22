@@ -17,7 +17,7 @@ const client = new TonClient({
 });
 
 const mnemonic = [
-  
+ 
 ];
 const JETTON_CONTRACT_ADDRESS =
   "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs";
@@ -245,8 +245,6 @@ const main = async () => {
     const comment = new TextEncoder().encode("Jetton Transfer");
     console.log("Comment:", comment);
 
-    const isOfflineSign = false; // Some services sign transactions on one server and send signed transactions from another server
-
     // Create the transfer body for the Jetton transfer
     // This prepares the payload that will be included in the transaction
     const jettonTransferBody = await senderJettonWallet.createTransferBody({
@@ -254,36 +252,33 @@ const main = async () => {
       jettonAmount: TonWeb.utils.toNano("0.00001"), // Amount of Jetton to transfer (0.00001 USD₮)
       toAddress: receiverWalletAddress, // Address to send the Jetton to
       responseAddress: senderWalletAddress, // Address to receive any response
-      forwardAmount: TonWeb.utils.toNano("0.000001"), // Amount to forward to the recipient
-      forwardPayload: comment, // Additional payload (comment) to include in the transfer
+      forwardAmount: TonWeb.utils.toNano("0.00001"), // Amount to forward to the recipient
+      forwardPayload: {
+        is_right: true,
+        value: {
+          sum_type: "TextComment",
+          op_code: 0,
+          value: {
+            text: "vm transfer",
+          },
+        },
+      }, // Additional payload (comment) to include in the transfer
     });
 
     // Create and send the Jetton transfer transaction
-    const transferJettonResult = await senderWallet.methods.transfer({
-      secretKey: keyPair.secretKey, // Sender's secret key to sign the transaction
-      toAddress: senderJettonWalletAddress, // Address of the sender's Jetton wallet
-      amount: TonWeb.utils.toNano("0.00001"), // Fee for the transfer (TON tokens)
-      seqno: senderSeqNo, // Sequence number for the transaction
-      payload: jettonTransferBody, // Payload of the transaction (prepared transfer body)
-      sendMode: 3, // Send mode for the transaction
-    });
+    // const transferJettonResult = await senderWallet.methods
+    //   .transfer({
+    //     secretKey: keyPair.secretKey, // Sender's secret key to sign the transaction
+    //     toAddress: senderJettonWalletAddress, // Address of the sender's Jetton wallet
+    //     amount: TonWeb.utils.toNano("0.02"), // Fee for the transfer (TON tokens)
+    //     seqno: senderSeqNo, // Sequence number for the transaction
+    //     payload: jettonTransferBody, // Payload of the transaction (prepared transfer body)
+    //   })
+    //   .send(); // Send the transaction and get the result
+    // // Wait for 5 seconds to ensure the transaction is processed
+    // await new Promise((resolve) => setTimeout(resolve, 15000));
 
-    if (isOfflineSign) {
-      const query = await transferJettonResult.getQuery(); // transfer query
-      const boc = await query.toBoc(false); // serialized transfer query in binary BoC format
-      const bocBase64 = TonWeb.utils.bytesToBase64(boc); // in base64 format
-
-      const signed = await tonweb.provider.sendBoc(bocBase64); // send transfer request to network
-      console.log("Signed transaction:", signed);
-    } else {
-      const transferResult = await transferJettonResult.send(); // Send the transaction and get the result
-      console.log("Transfer result:", transferResult);
-    }
-
-    // Wait for 15 seconds to ensure the transaction is processed
-    await new Promise((resolve) => setTimeout(resolve, 15000));
-
-    console.log("Jetton Transfer result:", transferJettonResult);
+    // console.log("Jetton Transfer result:", transferJettonResult);
 
     const senderJettonBalanceAfter = await checkJettonBalance(
       senderJettonWallet
@@ -303,8 +298,10 @@ const main = async () => {
       "USD₮"
     );
     let senderLastTxn = await client.getTransactions(senderWalletAddress, 1);
-    console.log("Sender Last Transaction:", senderLastTxn[0]);
-    const outMessages = senderLastTxn[0].outMessages;
+    // console.log("Sender Last Transaction:", senderLastTxn[0]);/
+    // console.log("Sender Last Transaction 1:", senderLastTxn[1]);
+    console.log("Sender Last Transaction 2:", senderLastTxn[1]);
+    const outMessages = senderLastTxn[2].outMessages;
     // Ensure outMessages map is not empty
     if (outMessages._map.size > 0) {
       // Iterate through the _map entries
@@ -316,40 +313,7 @@ const main = async () => {
           "Sender Value Body amount:",
           formatBalance(value.info.value.coins)
         );
-
-        if (value.body) {
-          const bodyHex = value.body;
-          // Convert the hex string to a buffer and decode it
-          const hexString = bodyHex.toString().slice(2, -1); // Remove 'x{' and '}'
-          const bodyBuffer = Buffer.from(hexString, "hex");
-          const decodedBody = bodyBuffer.toString("utf-8");
-          console.log("Decoded Body:", decodedBody);
-        } else {
-          console.log("No body in the value.");
-        }
-      }
-    } else {
-      console.log("No outMessages available.");
-    }
-
-    // Get last txn on receiver side
-    let receiverLastTxn = await client.getTransactions(
-      receiverWalletAddress.toString(true, true, true),
-      1
-    );
-    console.log("Receiver Last Transaction:", receiverLastTxn[0]);
-    const inMessage = receiverLastTxn[0].inMessage;
-    if (inMessage && inMessage.body) {
-      const bodyHex = inMessage.body;
-      const value = inMessage.info;
-      console.log("Receiver Value Body src:", value.src);
-      console.log("Receiver Value Body dst:", value.dest);
-      console.log(
-        "Receiver Value Body amount:",
-        formatBalance(value.value.coins)
-      );
-      if (typeof bodyHex === "object" && bodyHex.toString) {
-        // Convert object to string
+        const bodyHex = value.body;
         const hexString = bodyHex.toString();
         // Remove the 'x{' prefix and '}' suffix if they exist
         const trimmedHexString = hexString.startsWith("x{")
@@ -358,12 +322,65 @@ const main = async () => {
         const bodyBuffer = Buffer.from(trimmedHexString, "hex");
         const decodedBody = bodyBuffer.toString("utf-8");
         console.log("Decoded Body:", decodedBody);
-      } else {
-        console.log("Body is not a string and cannot be converted.");
+        // if (value.body) {
+        //   const bodyHex = value.body;
+        //   // Convert the hex string to a buffer and decode it
+        //   const hexString = bodyHex.toString().slice(2, -1); // Remove 'x{' and '}'
+        //   const bodyBuffer = Buffer.from(hexString, "hex");
+        //   const decodedBody = bodyBuffer.toString("utf-8");
+        //   console.log("Decoded Body:", decodedBody);
+        // } else {
+        //   console.log("No body in the value.");
+        // }
       }
     } else {
-      console.log("No inMessage body available.");
+      console.log("No outMessages available.");
     }
+
+    // // Get last txn on receiver side
+    // let receiverLastTxn = await client.getTransactions(
+    //   receiverWalletAddress.toString(true, true, true),
+    //   1
+    // );
+    // console.log("Receiver Last Transaction:", receiverLastTxn[0]);
+
+    // const inMessage = receiverLastTxn[0].inMessage;
+    // if (inMessage && inMessage.body) {
+    //   // const bodyHex = inMessage.body;
+    //   const value = inMessage.info;
+    //   console.log("Receiver Value Body src:", value.src);
+    //   console.log("Receiver Value Body dst:", value.dest);
+    //   console.log(
+    //     "Receiver Value Body amount:",
+    //     formatBalance(value.value.coins)
+    //   );
+    //   console.log(" Body amount:", value.value.coins);
+
+    //   const bodyHex = inMessage.body;
+    //   const hexString = bodyHex.toString();
+    //   // Remove the 'x{' prefix and '}' suffix if they exist
+    //   const trimmedHexString = hexString.startsWith("x{")
+    //     ? hexString.slice(2, -1)
+    //     : hexString;
+    //   const bodyBuffer = Buffer.from(trimmedHexString, "hex");
+    //   const decodedBody = bodyBuffer.toString("utf-8");
+    //   console.log("Decoded Body:", decodedBody);
+    //   // if (typeof bodyHex === "object" && bodyHex.toString) {
+    //   //   // Convert object to string
+    //   //   const hexString = bodyHex.toString();
+    //   //   // Remove the 'x{' prefix and '}' suffix if they exist
+    //   //   const trimmedHexString = hexString.startsWith("x{")
+    //   //     ? hexString.slice(2, -1)
+    //   //     : hexString;
+    //   //   const bodyBuffer = Buffer.from(trimmedHexString, "hex");
+    //   //   const decodedBody = bodyBuffer.toString("utf-8");
+    //   //   console.log("Decoded Body:", decodedBody);
+    //   // } else {
+    //   //   console.log("Body is not a string and cannot be converted.");
+    //   // }
+    // } else {
+    //   console.log("No inMessage body available.");
+    // }
   } catch (error) {
     console.error("Error during transaction:", error);
   }
