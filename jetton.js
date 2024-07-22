@@ -4,19 +4,14 @@ const { JettonMinter, JettonWallet } = TonWeb.token.jetton;
 const crypto = require("crypto");
 
 const mnemonic = [
- 
+
 ];
-const JETTON_CONTRACT_ADDRESS =
-  "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs";
+const JETTON_CONTRACT_ADDRESS = "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs";
 const WALLET2_ADDRESS = "UQDOvT4VeNNUq3ibvviqkIcqyu_75SH_MBSN4VJYqDulhEly";
-const API_KEY =
-  "4228a35e740e0041639fdbc8dd46edc38c817b3a3bc3938ff2f8f13fa38afa33";
-const tonCenterPoint = "https://toncenter.com";
+const API_KEY = "4228a35e740e0041639fdbc8dd46edc38c817b3a3bc3938ff2f8f13fa38afa33";
 
 const tonweb = new TonWeb(
-  new TonWeb.HttpProvider("https://toncenter.com/api/v2/jsonRPC", {
-    apiKey: API_KEY,
-  })
+  new TonWeb.HttpProvider("https://toncenter.com/api/v2/jsonRPC", { apiKey: API_KEY })
 );
 
 const generateUniqueQueryId = () => {
@@ -40,22 +35,15 @@ const main = async () => {
 
     const keyPair = await tonMnemonic.mnemonicToKeyPair(mnemonic);
     const WalletClass = tonweb.wallet.all.v4R2;
-    const wallet = new WalletClass(tonweb.provider, {
-      publicKey: keyPair.publicKey,
-    });
+    const wallet = new WalletClass(tonweb.provider, { publicKey: keyPair.publicKey });
     const walletAddress = await wallet.getAddress();
     console.log("Wallet address:", walletAddress.toString(true, true, true));
 
     const jettonMinter = new JettonMinter(tonweb.provider, {
       address: new TonWeb.utils.Address(JETTON_CONTRACT_ADDRESS),
     });
-    const jettonWalletAddress = await jettonMinter.getJettonWalletAddress(
-      walletAddress
-    );
-    console.log(
-      "Jetton wallet address:",
-      jettonWalletAddress.toString(true, true, true)
-    );
+    const jettonWalletAddress = await jettonMinter.getJettonWalletAddress(walletAddress);
+    console.log("Jetton wallet address:", jettonWalletAddress.toString(true, true, true));
 
     const jettonWallet = new JettonWallet(tonweb.provider, {
       address: jettonWalletAddress,
@@ -69,30 +57,31 @@ const main = async () => {
 
     const query_id = generateUniqueQueryId();
 
-    // Custom message for Jetton transfer
-    const comment = new TextEncoder().encode("Jetton Transfer");
-
     const transferBody = await jettonWallet.createTransferBody({
       queryId: query_id,
       jettonAmount: TonWeb.utils.toNano("0.00001"), // Amount of Jetton to transfer (0.00001 USD₮)
       toAddress: new TonWeb.utils.Address(WALLET2_ADDRESS),
       responseAddress: walletAddress,
       forwardAmount: TonWeb.utils.toNano("0.000001"), // Forward amount
-      forwardPayload: comment, // Custom message
     });
 
-    // const transferResult = await wallet.methods
-    //   .transfer({
-    //     secretKey: keyPair.secretKey,
-    //     toAddress: jettonWalletAddress,
-    //     amount: TonWeb.utils.toNano("0.01"), // Fee for the transfer
-    //     seqno: seqno,
-    //     payload: transferBody,
-    //     sendMode: 3,
-    //   })
-    //   .send();
+    // Get and print the Jetton wallet address for the destination
+    const destinationWalletAddress = new TonWeb.utils.Address(WALLET2_ADDRESS);
+    const destinationJettonWalletAddress = await jettonMinter.getJettonWalletAddress(destinationWalletAddress);
+    console.log("Destination Jetton wallet address:", destinationJettonWalletAddress.toString(true, true, true));
 
-    // console.log("Transfer result:", transferResult);
+    const transferResult = await wallet.methods
+      .transfer({
+        secretKey: keyPair.secretKey,
+        toAddress: jettonWalletAddress,
+        amount: TonWeb.utils.toNano("0.02"), // Increased fee for the transfer
+        seqno: seqno,
+        payload: transferBody,
+        sendMode: 3,
+      })
+      .send();
+
+    console.log("Transfer result:", transferResult);
 
     // Wait for 5 seconds to ensure the transaction is processed
     await new Promise((resolve) => setTimeout(resolve, 5000));
