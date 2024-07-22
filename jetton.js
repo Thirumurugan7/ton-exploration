@@ -40,6 +40,19 @@ const retryWithBackoff = async (fn, retries = 5, delay = 10000) => {
     return retryWithBackoff(fn, retries - 1, delay * 2);
   }
 };
+function decodeHexBody(hexString) {
+  // Remove the 'x{' prefix and '}' suffix if they exist
+  const trimmedHexString = hexString.startsWith("x{")
+    ? hexString.slice(2, -1)
+    : hexString;
+  const bodyBuffer = Buffer.from(trimmedHexString, "hex");
+  return bodyBuffer.toString("utf-8");
+}
+
+function decodeTransactionBody(transactionBody) {
+  const decodedBody = Buffer.from(transactionBody, "hex").toString("utf-8");
+  return decodedBody;
+}
 
 const generateUniqueQueryId = () => {
   const buffer = crypto.randomBytes(8);
@@ -242,9 +255,12 @@ const main = async () => {
     );
 
     const query_id = generateUniqueQueryId();
-    const comment = new TextEncoder().encode("Jetton Transfer");
-    console.log("Comment:", comment);
 
+    // Prepare the text comment as a Cell
+    const Cell = TonWeb.boc.Cell;
+    const commentCell = new Cell();
+    commentCell.bits.writeUint(0, 32); // op_code for TextComment
+    commentCell.bits.writeString("VM Transfer");
     // Create the transfer body for the Jetton transfer
     // This prepares the payload that will be included in the transaction
     const jettonTransferBody = await senderJettonWallet.createTransferBody({
@@ -253,16 +269,8 @@ const main = async () => {
       toAddress: receiverWalletAddress, // Address to send the Jetton to
       responseAddress: senderWalletAddress, // Address to receive any response
       forwardAmount: TonWeb.utils.toNano("0.00001"), // Amount to forward to the recipient
-      forwardPayload: {
-        is_right: true,
-        value: {
-          sum_type: "TextComment",
-          op_code: 0,
-          value: {
-            text: "vm transfer",
-          },
-        },
-      }, // Additional payload (comment) to include in the transfer
+      forwardPayload: commentCell,
+      // Additional payload (comment) to include in the transfer
     });
 
     // Create and send the Jetton transfer transaction
@@ -275,7 +283,7 @@ const main = async () => {
     //     payload: jettonTransferBody, // Payload of the transaction (prepared transfer body)
     //   })
     //   .send(); // Send the transaction and get the result
-    // // Wait for 5 seconds to ensure the transaction is processed
+    // // // Wait for 5 seconds to ensure the transaction is processed
     // await new Promise((resolve) => setTimeout(resolve, 15000));
 
     // console.log("Jetton Transfer result:", transferJettonResult);
@@ -300,87 +308,65 @@ const main = async () => {
     let senderLastTxn = await client.getTransactions(senderWalletAddress, 1);
     // console.log("Sender Last Transaction:", senderLastTxn[0]);/
     // console.log("Sender Last Transaction 1:", senderLastTxn[1]);
-    console.log("Sender Last Transaction 2:", senderLastTxn[1]);
-    const outMessages = senderLastTxn[2].outMessages;
+    // console.log("Sender Last Transaction 1:", senderLastTxn[1]);
+    const outMessages = senderLastTxn[1].outMessages;
     // Ensure outMessages map is not empty
-    if (outMessages._map.size > 0) {
-      // Iterate through the _map entries
-      for (const [key, value] of outMessages._map) {
-        console.log(`Key: ${key}, Value:`, value);
-        console.log("Sender Value Body src:", value.info.src);
-        console.log("Sender Value Body dst:", value.info.dest);
-        console.log(
-          "Sender Value Body amount:",
-          formatBalance(value.info.value.coins)
-        );
-        const bodyHex = value.body;
-        const hexString = bodyHex.toString();
-        // Remove the 'x{' prefix and '}' suffix if they exist
-        const trimmedHexString = hexString.startsWith("x{")
-          ? hexString.slice(2, -1)
-          : hexString;
-        const bodyBuffer = Buffer.from(trimmedHexString, "hex");
-        const decodedBody = bodyBuffer.toString("utf-8");
-        console.log("Decoded Body:", decodedBody);
-        // if (value.body) {
-        //   const bodyHex = value.body;
-        //   // Convert the hex string to a buffer and decode it
-        //   const hexString = bodyHex.toString().slice(2, -1); // Remove 'x{' and '}'
-        //   const bodyBuffer = Buffer.from(hexString, "hex");
-        //   const decodedBody = bodyBuffer.toString("utf-8");
-        //   console.log("Decoded Body:", decodedBody);
-        // } else {
-        //   console.log("No body in the value.");
-        // }
-      }
-    } else {
-      console.log("No outMessages available.");
-    }
+    // if (outMessages._map.size > 0) {
+    //   // Iterate through the _map entries
+    //   for (const [key, value] of outMessages._map) {
+    //     console.log(`Key: ${key}, Value:`, value);
+    //     console.log("Sender Value Body src:", value.info.src);
+    //     console.log("Sender Value Body dst:", value.info.dest);
+    //     console.log(
+    //       "Sender Value Body amount:",
+    //       formatBalance(value.info.value.coins)
+    //     );
+
+    //     const bodyHex = value.body.toString();
+    //     console.log("Body Hex:", bodyHex);
+    //     const decodedBody = decodeHexBody(bodyHex);
+    //     console.log("Decoded Body:", decodedBody);
+    //   }
+    // } else {
+    //   console.log("No outMessages available.");
+    // }
 
     // // Get last txn on receiver side
-    // let receiverLastTxn = await client.getTransactions(
-    //   receiverWalletAddress.toString(true, true, true),
-    //   1
-    // );
-    // console.log("Receiver Last Transaction:", receiverLastTxn[0]);
+    let receiverLastTxn = await client.getTransactions(
+      receiverWalletAddress.toString(true, true, true),
+      1
+    );
+    console.log("Receiver Last Transaction:", receiverLastTxn[0]);
+    const inMessage = receiverLastTxn[0].inMessage;
 
-    // const inMessage = receiverLastTxn[0].inMessage;
-    // if (inMessage && inMessage.body) {
-    //   // const bodyHex = inMessage.body;
-    //   const value = inMessage.info;
-    //   console.log("Receiver Value Body src:", value.src);
-    //   console.log("Receiver Value Body dst:", value.dest);
-    //   console.log(
-    //     "Receiver Value Body amount:",
-    //     formatBalance(value.value.coins)
-    //   );
-    //   console.log(" Body amount:", value.value.coins);
+    if (inMessage && inMessage.body) {
+      const value = inMessage.info;
+      console.log("Receiver Value Body src:", value.src);
+      console.log("Receiver Value Body dst:", value.dest);
+      console.log(
+        "Receiver Value Body amount:",
+        formatBalance(value.value.coins)
+      );
+      console.log("Body amount:", value.value.coins);
 
-    //   const bodyHex = inMessage.body;
-    //   const hexString = bodyHex.toString();
-    //   // Remove the 'x{' prefix and '}' suffix if they exist
-    //   const trimmedHexString = hexString.startsWith("x{")
-    //     ? hexString.slice(2, -1)
-    //     : hexString;
-    //   const bodyBuffer = Buffer.from(trimmedHexString, "hex");
-    //   const decodedBody = bodyBuffer.toString("utf-8");
-    //   console.log("Decoded Body:", decodedBody);
-    //   // if (typeof bodyHex === "object" && bodyHex.toString) {
-    //   //   // Convert object to string
-    //   //   const hexString = bodyHex.toString();
-    //   //   // Remove the 'x{' prefix and '}' suffix if they exist
-    //   //   const trimmedHexString = hexString.startsWith("x{")
-    //   //     ? hexString.slice(2, -1)
-    //   //     : hexString;
-    //   //   const bodyBuffer = Buffer.from(trimmedHexString, "hex");
-    //   //   const decodedBody = bodyBuffer.toString("utf-8");
-    //   //   console.log("Decoded Body:", decodedBody);
-    //   // } else {
-    //   //   console.log("Body is not a string and cannot be converted.");
-    //   // }
-    // } else {
-    //   console.log("No inMessage body available.");
-    // }
+      const bodyHex = inMessage.body.toString();
+      const hexString = bodyHex.startsWith("x{")
+        ? bodyHex.slice(2, -1)
+        : bodyHex;
+      const bodyBuffer = Buffer.from(hexString, "hex");
+
+      let decodedBody;
+      try {
+        const cell = Cell.fromBoc(bodyBuffer)[0];
+        decodedBody = cell.bits.toString();
+      } catch (error) {
+        decodedBody = bodyBuffer.toString("utf-8");
+      }
+
+      console.log("Decoded Body:", decodedBody);
+    } else {
+      console.log("No inMessage body available.");
+    }
   } catch (error) {
     console.error("Error during transaction:", error);
   }
