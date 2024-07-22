@@ -3,17 +3,24 @@ const tonMnemonic = require("tonweb-mnemonic");
 const { JettonMinter, JettonWallet } = TonWeb.token.jetton;
 const crypto = require("crypto");
 const { sign, signVerify } = require("@ton/crypto");
-const { internal } = require("@ton/core");
+const { internal, beginCell, Cell } = require("@ton/core");
+const { TonClient } = require("@ton/ton");
 
-const mnemonic = [
-
-];
-const JETTON_CONTRACT_ADDRESS =
-  "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs";
-const WALLET2_ADDRESS = "UQDOvT4VeNNUq3ibvviqkIcqyu_75SH_MBSN4VJYqDulhEly";
+const tonCenterPoint = "https://toncenter.com";
 const API_KEY =
   "4228a35e740e0041639fdbc8dd46edc38c817b3a3bc3938ff2f8f13fa38afa33";
-const tonCenterPoint = "https://toncenter.com";
+
+const client = new TonClient({
+  endpoint: `${tonCenterPoint}/api/v2/jsonRPC`,
+  apiKey: API_KEY,
+  timeout: 60000,
+});
+
+const mnemonic = [];
+const JETTON_CONTRACT_ADDRESS =
+  "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs";
+const RECIPIENT_WALLET_ADDRESS =
+  "EQDOvT4VeNNUq3ibvviqkIcqyu_75SH_MBSN4VJYqDulhBS3";
 
 const tonweb = new TonWeb(
   new TonWeb.HttpProvider("https://toncenter.com/api/v2/jsonRPC", {
@@ -21,10 +28,23 @@ const tonweb = new TonWeb(
   })
 );
 
+const retryWithBackoff = async (fn, retries = 5, delay = 10000) => {
+  try {
+    return await fn();
+  } catch (error) {
+    if (retries === 0) throw error;
+    console.log(`Retrying in ${delay} ms due to error:`, error.message);
+    await new Promise((r) => setTimeout(r, delay));
+    return retryWithBackoff(fn, retries - 1, delay * 2);
+  }
+};
+
 const generateUniqueQueryId = () => {
   const buffer = crypto.randomBytes(8);
   return buffer.readBigUInt64BE().toString();
 };
+
+const formatBalance = (balance) => (Number(balance) / 1e9).toFixed(2);
 
 const checkJettonBalance = async (jettonWallet) => {
   try {
@@ -42,151 +62,293 @@ const main = async () => {
 
     const keyPair = await tonMnemonic.mnemonicToKeyPair(mnemonic);
     const WalletClass = tonweb.wallet.all.v4R2;
-    const wallet = new WalletClass(tonweb.provider, {
+    const senderWallet = new WalletClass(tonweb.provider, {
       publicKey: keyPair.publicKey,
     });
-    const walletAddress = await wallet.getAddress();
-    console.log("Wallet address:", walletAddress.toString(true, true, true));
+    const senderWalletAddress = await senderWallet.getAddress();
+    console.log(
+      "Sender Wallet Address:",
+      senderWalletAddress.toString(true, true, true)
+    );
 
+    const senderSeqNo = await senderWallet.methods.seqno().call();
+    console.log("Sender Seq No:", senderSeqNo);
+
+    const senderAccountInfo = await client.getContractState(
+      senderWalletAddress
+    );
+    console.log("Sender Account Info:", senderAccountInfo);
+
+    // Receiver information
+    const receiverWalletAddress = new TonWeb.utils.Address(
+      RECIPIENT_WALLET_ADDRESS
+    );
+    console.log(
+      "Receiver Wallet Address:",
+      receiverWalletAddress.toString(true, true, true)
+    );
+
+    const receiverAccountInfo = await client.getContractState(
+      receiverWalletAddress
+    );
+    console.log("Receiver Account Info:", receiverAccountInfo);
+
+    // // Prepare the transfer message
+    // let transferMessage = {
+    //   info: {
+    //     type: "internal",
+    //     to: receiverWalletAddress,
+    //     value: { coins: TonWeb.utils.toNano("0.1") }, // Amount in TON
+    //     bounce: true,
+    //     ihrDisabled: true,
+    //     bounced: false,
+    //     ihrFee: 0n,
+    //     forwardFee: 0n,
+    //     createdAt: 0,
+    //     createdLt: 0n,
+    //   },
+    //   init: undefined,
+    //   body: beginCell()
+    //     .storeBuffer(Buffer.from("USDT Transfer", "utf-8"))
+    //     .endCell(),
+    // };
+    // console.log("Transfer Message:", transferMessage);
+
+    // // Estimate fees
+    // let estimatedFee = await client.estimateExternalMessageFee(
+    //   senderWalletAddress,
+    //   transferMessage
+    // );
+    // console.log("Estimated Fee:", estimatedFee);
+
+    // // Transfer message with fee details before signing
+    // let transferMsgWithFeeDetailsBefore = {
+    //   ...transferMessage,
+    //   estimatedFee,
+    // };
+    // console.log(
+    //   "Transfer Message with Fee Details Before Signing:",
+    //   transferMsgWithFeeDetailsBefore
+    // );
+
+    // // Manually serialize the transfer message
+    // const serializedTransferMsgBefore = beginCell()
+    //   .storeUint(0x18, 6) // Message header
+    //   .storeAddress(transferMessage.info.dest)
+    //   .storeCoins(transferMessage.info.value.coins)
+    //   .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+    //   .storeRef(transferMessage.body)
+    //   .endCell()
+    //   .toBoc();
+    // console.log(
+    //   "Serialized Transfer Message with Fee Details Before Signing:",
+    //   serializedTransferMsgBefore
+    // );
+
+    // // Deserialize the transfer message to verify
+    // const deserializedTransferMsgBefore = Cell.fromBoc(
+    //   serializedTransferMsgBefore
+    // )[0];
+    // console.log(
+    //   "Deserialized Transfer Message with Fee Details Before Signing:",
+    //   deserializedTransferMsgBefore
+    // );
+
+    // // Sign the message buffer
+    // const messageBuffer = Buffer.from(serializedTransferMsgBefore);
+    // const signature = sign(messageBuffer, keyPair.secretKey);
+    // console.log("Signature:", signature);
+
+    // // Transfer message with fee details after signing
+    // let transferMsgWithFeeDetailsAfter = {
+    //   ...transferMsgWithFeeDetailsBefore,
+    //   signature,
+    // };
+    // console.log(
+    //   "Transfer Message with Fee Details After Signing:",
+    //   transferMsgWithFeeDetailsAfter
+    // );
+
+    // // Manually serialize the transfer message after signing
+    // const signedTransferMessage = beginCell()
+    //   .storeUint(0x18, 6) // Message header
+    //   .storeAddress(transferMessage.info.dest)
+    //   .storeCoins(transferMessage.info.value.coins)
+    //   .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+    //   .storeRef(transferMessage.body)
+    //   .endCell();
+
+    // const serializedTransferMsgAfter = signedTransferMessage.toBoc();
+    // console.log(
+    //   "Serialized Transfer Message with Fee Details After Signing:",
+    //   serializedTransferMsgAfter
+    // );
+
+    // // Deserialize the transfer message to verify
+    // const deserializedTransferMsgAfter = Cell.fromBoc(
+    //   serializedTransferMsgAfter
+    // )[0];
+    // console.log(
+    //   "Deserialized Transfer Message with Fee Details After Signing:",
+    //   deserializedTransferMsgAfter
+    // );
+
+    // Jetton related information
     const jettonMinter = new JettonMinter(tonweb.provider, {
       address: new TonWeb.utils.Address(JETTON_CONTRACT_ADDRESS),
     });
-    const jettonWalletAddress = await jettonMinter.getJettonWalletAddress(
-      walletAddress
-    );
-    console.log(
-      "Jetton wallet address:",
-      jettonWalletAddress.toString(true, true, true)
+    const senderJettonWalletAddress = await jettonMinter.getJettonWalletAddress(
+      senderWalletAddress
     );
 
-    const jettonWallet = new JettonWallet(tonweb.provider, {
-      address: jettonWalletAddress,
+    console.log(
+      "Sender Jetton Wallet Address:",
+      senderJettonWalletAddress.toString(true, true, true)
+    );
+
+    const receiverJettonWalletAddress =
+      await jettonMinter.getJettonWalletAddress(receiverWalletAddress);
+    console.log(
+      "Receiver Jetton Wallet Address:",
+      receiverJettonWalletAddress.toString(true, true, true)
+    );
+
+    const senderJettonWallet = new JettonWallet(tonweb.provider, {
+      address: senderJettonWalletAddress,
     });
 
-    const balanceBefore = await checkJettonBalance(jettonWallet);
-    console.log("Balance before transfer:", balanceBefore, "USD₮");
+    const receiverJettonWallet = new JettonWallet(tonweb.provider, {
+      address: receiverJettonWalletAddress,
+    });
 
-    const seqno = (await wallet.methods.seqno().call()) || 0;
-    console.log("Seqno:", seqno);
-
-    const query_id = generateUniqueQueryId();
-    // Signing and verifying a custom message
-    const message = "Hello, This is Vm.";
-    const messageBuffer = Buffer.from(message);
-
-    // Sign the message
-    const signature = sign(messageBuffer, keyPair.secretKey);
-    console.log("Signature:", signature);
-
-    // Verify the signature
-    const isValid = signVerify(messageBuffer, signature, keyPair.publicKey);
-    console.log("Is the signature valid?", isValid);
-
-    // To sign a random hash value
-    const randomHash = Buffer.from("hello-vm");
-    const hashSignature = sign(randomHash, keyPair.secretKey);
-    console.log("Hash Signature:", hashSignature);
-
-    // Verify the hash signature
-    const isHashValid = signVerify(
-      randomHash,
-      hashSignature,
-      keyPair.publicKey
+    const senderJettonBalanceBefore = await checkJettonBalance(
+      senderJettonWallet
+    );
+    console.log(
+      "Sender Jetton Balance Before:",
+      senderJettonBalanceBefore,
+      "USD₮"
     );
 
-    console.log("Is the hash signature valid?", isHashValid);
+    const receiverJettonBalanceBefore = await checkJettonBalance(
+      receiverJettonWallet
+    );
+    console.log(
+      "Receiver Jetton Balance Before:",
+      receiverJettonBalanceBefore,
+      "USD₮"
+    );
+
+    const query_id = generateUniqueQueryId();
     const comment = new TextEncoder().encode("Jetton Transfer");
     console.log("Comment:", comment);
 
-    const transferBody = await jettonWallet.createTransferBody({
-      queryId: query_id,
+    // Create the transfer body for the Jetton transfer
+    // This prepares the payload that will be included in the transaction
+    const jettonTransferBody = await senderJettonWallet.createTransferBody({
+      queryId: query_id, // A unique query ID for the transfer
       jettonAmount: TonWeb.utils.toNano("0.00001"), // Amount of Jetton to transfer (0.00001 USD₮)
-      toAddress: new TonWeb.utils.Address(WALLET2_ADDRESS),
-      responseAddress: walletAddress,
-      forwardAmount: TonWeb.utils.toNano("0.000001"), // Forward amount
-      forwardPayload: comment,
+      toAddress: receiverWalletAddress, // Address to send the Jetton to
+      responseAddress: senderWalletAddress, // Address to receive any response
+      forwardAmount: TonWeb.utils.toNano("0.000001"), // Amount to forward to the recipient
+      forwardPayload: comment, // Additional payload (comment) to include in the transfer
     });
 
-    // Get and print the Jetton wallet address for the destination
-    const destinationWalletAddress = new TonWeb.utils.Address(WALLET2_ADDRESS);
-    const destinationJettonWalletAddress =
-      await jettonMinter.getJettonWalletAddress(destinationWalletAddress);
-    console.log(
-      "Destination Jetton wallet address:",
-      destinationJettonWalletAddress.toString(true, true, true)
+    // Create and send the Jetton transfer transaction
+    const transferJettonResult = await senderWallet.methods
+      .transfer({
+        secretKey: keyPair.secretKey, // Sender's secret key to sign the transaction
+        toAddress: senderJettonWalletAddress, // Address of the sender's Jetton wallet
+        amount: TonWeb.utils.toNano("0.00001"), // Fee for the transfer (TON tokens)
+        seqno: senderSeqNo, // Sequence number for the transaction
+        payload: jettonTransferBody, // Payload of the transaction (prepared transfer body)
+        sendMode: 3, // Send mode for the transaction
+      })
+      .send(); // Send the transaction and get the result
+    // Wait for 15 seconds to ensure the transaction is processed
+    await new Promise((resolve) => setTimeout(resolve, 15000));
+
+    console.log("Jetton Transfer result:", transferJettonResult);
+
+    const senderJettonBalanceAfter = await checkJettonBalance(
+      senderJettonWallet
     );
-    const isOfflineSign = false; // Some services sign transactions on one server and send signed transactions from another server
-    const transfer = await wallet.methods.transfer({
-      secretKey: keyPair.secretKey,
-      toAddress: jettonWalletAddress,
-      amount: TonWeb.utils.toNano("0.02"), // Increased fee for the transfer
-      seqno: seqno,
-      payload: transferBody,
-      sendMode: 3,
-    });
-    if (isOfflineSign) {
-      const query = await transfer.getQuery(); // transfer query
-      const boc = await query.toBoc(false); // serialized transfer query in binary BoC format
-      const bocBase64 = TonWeb.utils.bytesToBase64(boc); // in base64 format
+    console.log(
+      "Sender Jetton Balance After:",
+      senderJettonBalanceAfter,
+      "USD₮"
+    );
 
-      const signed = await tonweb.provider.sendBoc(bocBase64); // send transfer request to network
-      console.log("Signed transaction:", signed);
+    const receiverJettonBalanceAfter = await checkJettonBalance(
+      receiverJettonWallet
+    );
+    console.log(
+      "Receiver Jetton Balance After:",
+      receiverJettonBalanceAfter,
+      "USD₮"
+    );
+    let senderLastTxn = await client.getTransactions(senderWalletAddress, 1);
+    console.log("Sender Last Transaction:", senderLastTxn[0]);
+    const outMessages = senderLastTxn[0].outMessages;
+    // Ensure outMessages map is not empty
+    if (outMessages._map.size > 0) {
+      // Iterate through the _map entries
+      for (const [key, value] of outMessages._map) {
+        console.log(`Key: ${key}, Value:`, value);
+        console.log("Sender Value Body src:", value.info.src);
+        console.log("Sender Value Body dst:", value.info.dest);
+        console.log(
+          "Sender Value Body amount:",
+          formatBalance(value.info.value.coins)
+        );
+
+        if (value.body) {
+          const bodyHex = value.body;
+          // Convert the hex string to a buffer and decode it
+          const hexString = bodyHex.toString().slice(2, -1); // Remove 'x{' and '}'
+          const bodyBuffer = Buffer.from(hexString, "hex");
+          const decodedBody = bodyBuffer.toString("utf-8");
+          console.log("Decoded Body:", decodedBody);
+        } else {
+          console.log("No body in the value.");
+        }
+      }
     } else {
-      const transferResult = await transfer.send();
-      console.log("Transfer result:", transferResult);
+      console.log("No outMessages available.");
     }
 
-    // Wait for 5 seconds to ensure the transaction is processed
-    await new Promise((resolve) => setTimeout(resolve, 20000));
-
-    const balanceAfter = await checkJettonBalance(jettonWallet);
-    console.log("Balance after transfer:", balanceAfter, "USD₮");
-
-    await tonweb.getTransactions(walletAddress, 1).then(async (resp) => {
-      const transactionDetails = resp[0];
-      console.log("Transaction Details:", transactionDetails);
-
-      const inMessage = transactionDetails.in_msg;
-      if (inMessage) {
-        console.log("Source:", inMessage.source);
-        console.log("Destination:", inMessage.destination);
-
-        if (inMessage.msg_data && inMessage.msg_data.body) {
-          const bodyBase64 = inMessage.msg_data.body;
-          const bodyBuffer = Buffer.from(bodyBase64, "base64"); // Decode from base64
-
-          // Convert buffer to a human-readable format
-          const decodedBody = bodyBuffer.toString("utf-8"); // Convert buffer to utf-8 string
-
-          console.log("Body content (base64):", bodyBase64);
-          console.log("Decoded Body content:", decodedBody);
-
-          // Check if the decoded body matches the original comment
-          if (decodedBody === "Jetton Transfer") {
-            console.log("Original Comment: Jetton Transfer");
-          }
-        } else {
-          console.log("No inMessage body available.");
-        }
-      }
-
-      const outMessages = transactionDetails.out_msgs;
-
-      if (outMessages.length > 0) {
-        for (const outMessage of outMessages) {
-          console.log("OutMessage:", outMessage);
-
-          if (outMessage.msg_data && outMessage.msg_data.body) {
-            const bodyHex = outMessage.msg_data.body;
-            console.log("Body content:", bodyHex);
-          } else {
-            console.log("No body in the out message.");
-          }
-        }
+    // Get last txn on receiver side
+    let receiverLastTxn = await client.getTransactions(
+      receiverWalletAddress.toString(true, true, true),
+      1
+    );
+    console.log("Receiver Last Transaction:", receiverLastTxn[0]);
+    const inMessage = receiverLastTxn[0].inMessage;
+    if (inMessage && inMessage.body) {
+      const bodyHex = inMessage.body;
+      const value = inMessage.info;
+      console.log("Receiver Value Body src:", value.src);
+      console.log("Receiver Value Body dst:", value.dest);
+      console.log(
+        "Receiver Value Body amount:",
+        formatBalance(value.value.coins)
+      );
+      if (typeof bodyHex === "object" && bodyHex.toString) {
+        // Convert object to string
+        const hexString = bodyHex.toString();
+        // Remove the 'x{' prefix and '}' suffix if they exist
+        const trimmedHexString = hexString.startsWith("x{")
+          ? hexString.slice(2, -1)
+          : hexString;
+        const bodyBuffer = Buffer.from(trimmedHexString, "hex");
+        const decodedBody = bodyBuffer.toString("utf-8");
+        console.log("Decoded Body:", decodedBody);
       } else {
-        console.log("No outMessages available.");
+        console.log("Body is not a string and cannot be converted.");
       }
-    });
+    } else {
+      console.log("No inMessage body available.");
+    }
   } catch (error) {
     console.error("Error during transaction:", error);
   }
