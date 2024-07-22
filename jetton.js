@@ -16,7 +16,9 @@ const client = new TonClient({
   timeout: 60000,
 });
 
-const mnemonic = [];
+const mnemonic = [
+  
+];
 const JETTON_CONTRACT_ADDRESS =
   "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs";
 const RECIPIENT_WALLET_ADDRESS =
@@ -243,6 +245,8 @@ const main = async () => {
     const comment = new TextEncoder().encode("Jetton Transfer");
     console.log("Comment:", comment);
 
+    const isOfflineSign = false; // Some services sign transactions on one server and send signed transactions from another server
+
     // Create the transfer body for the Jetton transfer
     // This prepares the payload that will be included in the transaction
     const jettonTransferBody = await senderJettonWallet.createTransferBody({
@@ -255,16 +259,27 @@ const main = async () => {
     });
 
     // Create and send the Jetton transfer transaction
-    const transferJettonResult = await senderWallet.methods
-      .transfer({
-        secretKey: keyPair.secretKey, // Sender's secret key to sign the transaction
-        toAddress: senderJettonWalletAddress, // Address of the sender's Jetton wallet
-        amount: TonWeb.utils.toNano("0.00001"), // Fee for the transfer (TON tokens)
-        seqno: senderSeqNo, // Sequence number for the transaction
-        payload: jettonTransferBody, // Payload of the transaction (prepared transfer body)
-        sendMode: 3, // Send mode for the transaction
-      })
-      .send(); // Send the transaction and get the result
+    const transferJettonResult = await senderWallet.methods.transfer({
+      secretKey: keyPair.secretKey, // Sender's secret key to sign the transaction
+      toAddress: senderJettonWalletAddress, // Address of the sender's Jetton wallet
+      amount: TonWeb.utils.toNano("0.00001"), // Fee for the transfer (TON tokens)
+      seqno: senderSeqNo, // Sequence number for the transaction
+      payload: jettonTransferBody, // Payload of the transaction (prepared transfer body)
+      sendMode: 3, // Send mode for the transaction
+    });
+
+    if (isOfflineSign) {
+      const query = await transfer.getQuery(); // transfer query
+      const boc = await query.toBoc(false); // serialized transfer query in binary BoC format
+      const bocBase64 = TonWeb.utils.bytesToBase64(boc); // in base64 format
+
+      const signed = await tonweb.provider.sendBoc(bocBase64); // send transfer request to network
+      console.log("Signed transaction:", signed);
+    } else {
+      const transferResult = await transfer.send(); // Send the transaction and get the result
+      console.log("Transfer result:", transferResult);
+    }
+
     // Wait for 15 seconds to ensure the transaction is processed
     await new Promise((resolve) => setTimeout(resolve, 15000));
 
